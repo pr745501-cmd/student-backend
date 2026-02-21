@@ -1,4 +1,4 @@
-// 🔥 Fix SRV issue (Windows only)
+// ================= DNS FIX (Windows SRV Fix) =================
 const dns = require("dns");
 dns.setServers(["8.8.8.8", "8.8.4.4"]);
 
@@ -11,17 +11,10 @@ const jwt = require("jsonwebtoken");
 
 const app = express();
 
-/* ================= CORS CONFIG ================= */
+/* ================= CORS (MOBILE + NETLIFY SAFE) ================= */
 
-app.use(
-  cors({
-    origin: [
-      "http://localhost:3000",
-      "https://studentmanagement-5.netlify.app"
-    ],
-    credentials: true
-  })
-);
+// For student project allow all origins
+app.use(cors());
 
 app.use(express.json());
 
@@ -29,7 +22,7 @@ app.use(express.json());
 
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log("✅ MongoDB Connected"))
-  .catch(err => console.log("❌ DB Error:", err));
+  .catch(err => console.log("❌ Mongo Error:", err));
 
 /* ================= MODELS ================= */
 
@@ -70,6 +63,7 @@ const verifyToken = (req, res, next) => {
 
     const token = header.split(" ")[1];
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
     req.user = decoded;
     next();
   } catch (err) {
@@ -85,18 +79,20 @@ app.post("/register", async (req, res) => {
     const { name, email, password } = req.body;
 
     const exists = await User.findOne({ email });
-    if (exists) return res.status(400).json({ message: "User already exists" });
+    if (exists)
+      return res.status(400).json({ message: "User already exists" });
 
-    const hash = await bcrypt.hash(password, 10);
+    const hashed = await bcrypt.hash(password, 10);
 
     await User.create({
       name,
       email,
-      password: hash,
+      password: hashed,
       role: "student"
     });
 
     res.json({ message: "Registered successfully" });
+
   } catch (err) {
     res.status(500).json({ message: "Server error" });
   }
@@ -108,10 +104,12 @@ app.post("/login", async (req, res) => {
     const { email, password } = req.body;
 
     const user = await User.findOne({ email });
-    if (!user) return res.status(400).json({ message: "User not found" });
+    if (!user)
+      return res.status(400).json({ message: "User not found" });
 
     const match = await bcrypt.compare(password, user.password);
-    if (!match) return res.status(400).json({ message: "Invalid credentials" });
+    if (!match)
+      return res.status(400).json({ message: "Invalid credentials" });
 
     const token = jwt.sign(
       { id: user._id, role: user.role },
@@ -157,18 +155,18 @@ app.post("/tasks", verifyToken, async (req, res) => {
   res.json(task);
 });
 
-// Update task (Admin edit)
+// Edit task
 app.put("/tasks/:id", verifyToken, async (req, res) => {
   if (req.user.role !== "admin")
     return res.status(403).json({ message: "Admin only" });
 
-  const task = await Task.findByIdAndUpdate(
+  const updated = await Task.findByIdAndUpdate(
     req.params.id,
     req.body,
     { new: true }
   );
 
-  res.json(task);
+  res.json(updated);
 });
 
 // Delete task
@@ -214,11 +212,11 @@ app.get("/tasks", verifyToken, async (req, res) => {
 
 // Student update status
 app.put("/status/:id", verifyToken, async (req, res) => {
-
   const { status } = req.body;
 
   const task = await Task.findById(req.params.id);
-  if (!task) return res.status(404).json({ message: "Task not found" });
+  if (!task)
+    return res.status(404).json({ message: "Task not found" });
 
   if (task.assignedTo.toString() !== req.user.id)
     return res.status(403).json({ message: "Not allowed" });
@@ -229,7 +227,10 @@ app.put("/status/:id", verifyToken, async (req, res) => {
   res.json(task);
 });
 
-/* ================= START SERVER ================= */
+/* ================= SERVER START ================= */
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+
+app.listen(PORT, () =>
+  console.log(`🚀 Server running on port ${PORT}`)
+);
