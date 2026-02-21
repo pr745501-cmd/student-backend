@@ -32,9 +32,9 @@ mongoose
     process.exit(1);
   });
 
-// --------------------
-// Auth Middleware
-// --------------------
+// =================================================
+// 🔐 VERIFY TOKEN MIDDLEWARE
+// =================================================
 const verifyToken = (req, res, next) => {
   const header = req.headers.authorization;
 
@@ -52,9 +52,9 @@ const verifyToken = (req, res, next) => {
   }
 };
 
-// --------------------
-// Health Check
-// --------------------
+// =================================================
+// 🏥 HEALTH CHECK
+// =================================================
 app.get("/", (req, res) => {
   res.send("🚀 Task Manager API Running");
 });
@@ -117,6 +117,22 @@ app.post("/login", async (req, res) => {
 });
 
 // =================================================
+// 👥 USERS ROUTE (FOR ADMIN DROPDOWN)
+// =================================================
+app.get("/users", verifyToken, async (req, res) => {
+  try {
+    if (req.user.role !== "admin") {
+      return res.status(403).json({ message: "Only admin can view users" });
+    }
+
+    const users = await User.find({ role: "student" });
+    res.json(users);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// =================================================
 // 📋 TASK ROUTES
 // =================================================
 
@@ -127,7 +143,12 @@ app.post("/tasks", verifyToken, async (req, res) => {
   }
 
   try {
-    const task = await Task.create(req.body);
+    const task = await Task.create({
+      ...req.body,
+      status: "incomplete",
+      verified: false
+    });
+
     res.status(201).json(task);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -135,26 +156,21 @@ app.post("/tasks", verifyToken, async (req, res) => {
 });
 
 // Get Tasks
-// Admin → sees all
-// Student → sees only assigned tasks
 app.get("/tasks", verifyToken, async (req, res) => {
   try {
-    let tasks;
-
-    if (req.user.role === "admin") {
-      tasks = await Task.find().populate("assignedTo", "name email");
-    } else {
-      tasks = await Task.find({ assignedTo: req.user.id })
-        .populate("assignedTo", "name email");
+    if (req.user.role === "student") {
+      const tasks = await Task.find({ assignedTo: req.user.id });
+      return res.json(tasks);
     }
 
+    const tasks = await Task.find();
     res.json(tasks);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// Update Task (Student marks complete)
+// Update Task
 app.put("/tasks/:id", verifyToken, async (req, res) => {
   try {
     const task = await Task.findById(req.params.id);
@@ -162,7 +178,6 @@ app.put("/tasks/:id", verifyToken, async (req, res) => {
     if (!task)
       return res.status(404).json({ message: "Task not found" });
 
-    // Student can update only their own task
     if (
       req.user.role === "student" &&
       task.assignedTo.toString() !== req.user.id
@@ -182,15 +197,7 @@ app.put("/tasks/:id", verifyToken, async (req, res) => {
   }
 });
 
-// =================================================
-// 🚀 Start Server
-// =================================================
-const PORT = process.env.PORT || 5000;
-
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-  
-  // Delete Task (Admin Only)
+// Delete Task (Admin Only)
 app.delete("/tasks/:id", verifyToken, async (req, res) => {
   if (req.user.role !== "admin") {
     return res.status(403).json({ message: "Only admin can delete tasks" });
@@ -203,4 +210,12 @@ app.delete("/tasks/:id", verifyToken, async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+// =================================================
+// 🚀 START SERVER
+// =================================================
+const PORT = process.env.PORT || 5000;
+
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
 });
