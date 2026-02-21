@@ -45,7 +45,7 @@ const verifyToken = (req, res, next) => {
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = decoded; // contains id & role
+    req.user = decoded;
     next();
   } catch (err) {
     res.status(401).json({ message: "Invalid token" });
@@ -63,10 +63,10 @@ app.get("/", (req, res) => {
 // 🔐 AUTH ROUTES
 // =================================================
 
-// Register
+// ✅ Register (Everyone becomes student)
 app.post("/register", async (req, res) => {
   try {
-    const { name, email, password, role } = req.body;
+    const { name, email, password } = req.body;
 
     const existingUser = await User.findOne({ email });
     if (existingUser)
@@ -78,7 +78,7 @@ app.post("/register", async (req, res) => {
       name,
       email,
       password: hashedPassword,
-      role
+      role: "student" // 🔥 Force student role
     });
 
     res.json({ message: "User registered successfully" });
@@ -87,7 +87,7 @@ app.post("/register", async (req, res) => {
   }
 });
 
-// Login
+// ✅ Login
 app.post("/login", async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -117,7 +117,7 @@ app.post("/login", async (req, res) => {
 });
 
 // =================================================
-// 👥 USERS ROUTE (FOR ADMIN DROPDOWN)
+// 👥 USERS ROUTE (Admin Only)
 // =================================================
 app.get("/users", verifyToken, async (req, res) => {
   try {
@@ -136,7 +136,7 @@ app.get("/users", verifyToken, async (req, res) => {
 // 📋 TASK ROUTES
 // =================================================
 
-// Create Task (Admin Only)
+// ✅ Create Task (Admin Only)
 app.post("/tasks", verifyToken, async (req, res) => {
   if (req.user.role !== "admin") {
     return res.status(403).json({ message: "Only admin can create tasks" });
@@ -155,22 +155,25 @@ app.post("/tasks", verifyToken, async (req, res) => {
   }
 });
 
-// Get Tasks
+// ✅ Get Tasks
 app.get("/tasks", verifyToken, async (req, res) => {
   try {
     if (req.user.role === "student") {
-      const tasks = await Task.find({ assignedTo: req.user.id });
+      const tasks = await Task.find({ assignedTo: req.user.id })
+        .populate("assignedTo", "name email");
       return res.json(tasks);
     }
 
-    const tasks = await Task.find();
+    const tasks = await Task.find()
+      .populate("assignedTo", "name email");
+
     res.json(tasks);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// Update Task
+// ✅ Update Task (Student marks complete)
 app.put("/tasks/:id", verifyToken, async (req, res) => {
   try {
     const task = await Task.findById(req.params.id);
@@ -197,7 +200,7 @@ app.put("/tasks/:id", verifyToken, async (req, res) => {
   }
 });
 
-// Delete Task (Admin Only)
+// ✅ Delete Task (Admin Only)
 app.delete("/tasks/:id", verifyToken, async (req, res) => {
   if (req.user.role !== "admin") {
     return res.status(403).json({ message: "Only admin can delete tasks" });
