@@ -3,222 +3,188 @@ const dns = require("dns");
 dns.setServers(["8.8.8.8", "8.8.4.4"]);
 
 require("dotenv").config();
-
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 
-const User = require("./models/User");
-const Task = require("./models/Task");
-
 const app = express();
-
-// --------------------
-// Middleware
-// --------------------
 app.use(cors());
 app.use(express.json());
 
-// --------------------
-// MongoDB Connection
-// --------------------
-mongoose
-  .connect(process.env.MONGO_URI)
-  .then(() => console.log("✅ MongoDB Connected"))
-  .catch((err) => {
-    console.error("❌ MongoDB Error:", err);
-    process.exit(1);
-  });
+mongoose.connect(process.env.MONGO_URI)
+  .then(() => console.log("MongoDB Connected"))
+  .catch(err => console.log(err));
 
-// =================================================
-// 🔐 VERIFY TOKEN MIDDLEWARE
-// =================================================
+/* ================= MODELS ================= */
+
+const userSchema = new mongoose.Schema({
+  name: String,
+  email: { type: String, unique: true },
+  password: String,
+  role: { type: String, default: "student" }
+});
+
+const taskSchema = new mongoose.Schema({
+  title: String,
+  description: String,
+  assignedTo: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "User"
+  },
+  status: { type: String, default: "incomplete" },
+  verified: { type: Boolean, default: false }
+}, { timestamps: true });
+
+const User = mongoose.model("User", userSchema);
+const Task = mongoose.model("Task", taskSchema);
+
+/* ================= AUTH MIDDLEWARE ================= */
+
 const verifyToken = (req, res, next) => {
   const header = req.headers.authorization;
-
-  if (!header)
-    return res.status(401).json({ message: "No token provided" });
+  if (!header) return res.status(401).json({ message: "No token" });
 
   const token = header.split(" ")[1];
-
-  try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = decoded;
-    next();
-  } catch (err) {
-    res.status(401).json({ message: "Invalid token" });
-  }
+  const decoded = jwt.verify(token, process.env.JWT_SECRET);
+  req.user = decoded;
+  next();
 };
 
-// =================================================
-// 🏥 HEALTH CHECK
-// =================================================
-app.get("/", (req, res) => {
-  res.send("🚀 Task Manager API Running");
-});
+/* ================= AUTH ROUTES ================= */
 
-// =================================================
-// 🔐 AUTH ROUTES
-// =================================================
-
-// ✅ Register (Everyone becomes student)
+// Register Student
 app.post("/register", async (req, res) => {
-  try {
-    const { name, email, password } = req.body;
+  const { name, email, password } = req.body;
 
-    const existingUser = await User.findOne({ email });
-    if (existingUser)
-      return res.status(400).json({ message: "User already exists" });
+  const exists = await User.findOne({ email });
+  if (exists) return res.status(400).json({ message: "User exists" });
 
-    const hashedPassword = await bcrypt.hash(password, 10);
+  const hash = await bcrypt.hash(password, 10);
 
-    await User.create({
-      name,
-      email,
-      password: hashedPassword,
-      role: "student" // 🔥 Force student role
-    });
+  await User.create({
+    name,
+    email,
+    password: hash,
+    role: "student"
+  });
 
-    res.json({ message: "User registered successfully" });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+  res.json({ message: "Registered successfully" });
 });
 
-// ✅ Login
+// Login
 app.post("/login", async (req, res) => {
-  try {
-    const { email, password } = req.body;
+  const { email, password } = req.body;
 
-    const user = await User.findOne({ email });
-    if (!user)
-      return res.status(400).json({ message: "User not found" });
+  const user = await User.findOne({ email });
+  if (!user) return res.status(400).json({ message: "User not found" });
 
-    const match = await bcrypt.compare(password, user.password);
-    if (!match)
-      return res.status(400).json({ message: "Invalid credentials" });
+  const match = await bcrypt.compare(password, user.password);
+  if (!match) return res.status(400).json({ message: "Invalid credentials" });
 
-    const token = jwt.sign(
-      { id: user._id, role: user.role },
-      process.env.JWT_SECRET,
-      { expiresIn: "1d" }
-    );
+  const token = jwt.sign(
+    { id: user._id, role: user.role },
+    process.env.JWT_SECRET,
+    { expiresIn: "1d" }
+  );
 
-    res.json({
-      token,
-      role: user.role,
-      name: user.name
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+  res.json({
+    token,
+    role: user.role,
+    name: user.name
+  });
 });
 
-// =================================================
-// 👥 USERS ROUTE (Admin Only)
-// =================================================
-app.get("/users", verifyToken, async (req, res) => {
-  try {
-    if (req.user.role !== "admin") {
-      return res.status(403).json({ message: "Only admin can view users" });
-    }
+/* ================= ADMIN ROUTES ================= */
 
-    const users = await User.find({ role: "student" });
-    res.json(users);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+// Get all students
+app.get("/students", verifyToken, async (req, res) => {
+  if (req.user.role !== "admin")
+    return res.status(403).json({ message: "Admin only" });
+
+  const students = await User.find({ role: "student" });
+  res.json(students);
 });
 
-// =================================================
-// 📋 TASK ROUTES
-// =================================================
-
-// ✅ Create Task (Admin Only)
+// Create task
 app.post("/tasks", verifyToken, async (req, res) => {
-  if (req.user.role !== "admin") {
-    return res.status(403).json({ message: "Only admin can create tasks" });
-  }
+  if (req.user.role !== "admin")
+    return res.status(403).json({ message: "Admin only" });
 
-  try {
-    const task = await Task.create({
-      ...req.body,
-      status: "incomplete",
-      verified: false
-    });
-
-    res.status(201).json(task);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+  const task = await Task.create(req.body);
+  res.json(task);
 });
 
-// ✅ Get Tasks
-app.get("/tasks", verifyToken, async (req, res) => {
-  try {
-    if (req.user.role === "student") {
-      const tasks = await Task.find({ assignedTo: req.user.id })
-        .populate("assignedTo", "name email");
-      return res.json(tasks);
-    }
-
-    const tasks = await Task.find()
-      .populate("assignedTo", "name email");
-
-    res.json(tasks);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// ✅ Update Task (Student marks complete)
+// Edit task
 app.put("/tasks/:id", verifyToken, async (req, res) => {
-  try {
-    const task = await Task.findById(req.params.id);
+  if (req.user.role !== "admin")
+    return res.status(403).json({ message: "Admin only" });
 
-    if (!task)
-      return res.status(404).json({ message: "Task not found" });
+  const task = await Task.findByIdAndUpdate(
+    req.params.id,
+    req.body,
+    { new: true }
+  );
 
-    if (
-      req.user.role === "student" &&
-      task.assignedTo.toString() !== req.user.id
-    ) {
-      return res.status(403).json({ message: "Not allowed" });
-    }
-
-    const updatedTask = await Task.findByIdAndUpdate(
-      req.params.id,
-      req.body,
-      { new: true }
-    );
-
-    res.json(updatedTask);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+  res.json(task);
 });
 
-// ✅ Delete Task (Admin Only)
+// Delete task
 app.delete("/tasks/:id", verifyToken, async (req, res) => {
-  if (req.user.role !== "admin") {
-    return res.status(403).json({ message: "Only admin can delete tasks" });
-  }
+  if (req.user.role !== "admin")
+    return res.status(403).json({ message: "Admin only" });
 
-  try {
-    await Task.findByIdAndDelete(req.params.id);
-    res.json({ message: "Task deleted successfully" });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+  await Task.findByIdAndDelete(req.params.id);
+  res.json({ message: "Deleted successfully" });
 });
 
-// =================================================
-// 🚀 START SERVER
-// =================================================
-const PORT = process.env.PORT || 5000;
+// Verify task
+app.put("/verify/:id", verifyToken, async (req, res) => {
+  if (req.user.role !== "admin")
+    return res.status(403).json({ message: "Admin only" });
 
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+  const task = await Task.findByIdAndUpdate(
+    req.params.id,
+    { verified: true },
+    { new: true }
+  );
+
+  res.json(task);
 });
+
+/* ================= STUDENT ROUTES ================= */
+
+// Get student tasks
+app.get("/tasks", verifyToken, async (req, res) => {
+
+  if (req.user.role === "admin") {
+    const tasks = await Task.find().populate("assignedTo", "name email");
+    return res.json(tasks);
+  }
+
+  const tasks = await Task.find({
+    assignedTo: req.user.id
+  });
+
+  res.json(tasks);
+});
+
+// Student mark complete
+app.put("/complete/:id", verifyToken, async (req, res) => {
+
+  const task = await Task.findById(req.params.id);
+
+  if (!task) return res.status(404).json({ message: "Not found" });
+
+  if (task.assignedTo.toString() !== req.user.id)
+    return res.status(403).json({ message: "Not allowed" });
+
+  task.status = "completed";
+  await task.save();
+
+  res.json(task);
+});
+
+const PORT = 5000;
+app.listen(PORT, () => console.log("Server running"));
